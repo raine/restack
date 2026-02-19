@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use clap::builder::styling::{AnsiColor, Effects, Styles};
-use console::style;
+use console::{Color, Style, style};
 use indicatif::{ProgressBar, ProgressStyle};
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
@@ -48,7 +48,11 @@ fn new_spinner(msg: &str) -> ProgressBar {
 }
 
 fn finish_spinner(pb: &ProgressBar, msg: &str, ok: bool) {
-    let prefix = if ok { "✔" } else { "✘" };
+    let prefix = if ok {
+        style("✔").green().to_string()
+    } else {
+        style("✘").red().to_string()
+    };
     pb.finish_with_message(format!("{prefix} {msg}"));
 }
 
@@ -176,6 +180,42 @@ fn sort_by_dependency(prs: Vec<PrInfo>) -> Result<Vec<PrInfo>> {
     Ok(sorted)
 }
 
+const BRANCH_PALETTE: &[Color] = &[
+    Color::Green,
+    Color::Cyan,
+    Color::Blue,
+    Color::Magenta,
+    Color::Yellow,
+    Color::Red,
+];
+
+fn branch_colors(prs: &[PrInfo]) -> HashMap<String, Style> {
+    let mut colors = HashMap::new();
+    let mut idx = 0;
+    for pr in prs {
+        for name in [&pr.base_ref, &pr.head_ref] {
+            if !colors.contains_key(name.as_str()) {
+                colors.insert(
+                    name.clone(),
+                    Style::new().fg(BRANCH_PALETTE[idx % BRANCH_PALETTE.len()]),
+                );
+                idx += 1;
+            }
+        }
+    }
+    colors
+}
+
+fn style_branch<'a>(
+    name: &'a str,
+    colors: &HashMap<String, Style>,
+) -> console::StyledObject<&'a str> {
+    match colors.get(name) {
+        Some(s) => s.apply_to(name),
+        None => Style::new().apply_to(name),
+    }
+}
+
 struct StackTree {
     roots: Vec<String>,
     children: HashMap<String, Vec<(u32, String)>>, // base_ref -> [(number, head_ref)]
@@ -233,16 +273,21 @@ impl StackTree {
         }
     }
 
-    fn print_colored(&self) {
+    fn print_colored(&self, colors: &HashMap<String, Style>) {
         for root in &self.roots {
-            println!("{}", style(root).bold());
+            println!("{}", style_branch(root, colors).bold());
             if let Some(kids) = self.children.get(root.as_str()) {
-                self.print_children_colored(kids, "");
+                self.print_children_colored(kids, "", colors);
             }
         }
     }
 
-    fn print_children_colored(&self, nodes: &[(u32, String)], prefix: &str) {
+    fn print_children_colored(
+        &self,
+        nodes: &[(u32, String)],
+        prefix: &str,
+        colors: &HashMap<String, Style>,
+    ) {
         for (i, (number, head_ref)) in nodes.iter().enumerate() {
             let is_last = i == nodes.len() - 1;
             let connector = if is_last { "└─" } else { "├─" };
@@ -252,12 +297,12 @@ impl StackTree {
                 "{}{} {} {}",
                 style(prefix).dim(),
                 style(connector).dim(),
-                style(format!("#{number}")).cyan().bold(),
-                style(head_ref).green(),
+                style(format!("#{number}")).bold(),
+                style_branch(head_ref, colors),
             );
 
             if let Some(kids) = self.children.get(head_ref.as_str()) {
-                self.print_children_colored(kids, &format!("{prefix}{child_prefix}"));
+                self.print_children_colored(kids, &format!("{prefix}{child_prefix}"), colors);
             }
         }
     }
@@ -308,7 +353,8 @@ fn main() -> Result<()> {
     };
 
     let prs = sort_by_dependency(prs)?;
-    StackTree::build(&prs).print_colored();
+    let colors = branch_colors(&prs);
+    StackTree::build(&prs).print_colored(&colors);
 
     // Preflight: verify all branches are checked out in a worktree
     for pr in &prs {
@@ -342,11 +388,21 @@ fn main() -> Result<()> {
             format!("origin/{}", pr.base_ref)
         };
 
+        let onto_styled = if rebased_heads.contains_key(&pr.base_ref) {
+            format!("{}", style_branch(&pr.base_ref, &colors))
+        } else {
+            format!(
+                "{}{}",
+                style("origin/").dim(),
+                style_branch(&pr.base_ref, &colors)
+            )
+        };
+
         let msg = format!(
             "{} {} → {}",
-            style(format!("#{}", pr.number)).cyan().bold(),
-            style(&pr.head_ref).green(),
-            style(&onto).yellow(),
+            style(format!("#{}", pr.number)).bold(),
+            style_branch(&pr.head_ref, &colors),
+            onto_styled,
         );
 
         if cli.dry_run {
