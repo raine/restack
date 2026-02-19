@@ -96,19 +96,17 @@ restack 42 43
    up each PR individually.
 2. **Sorts by dependency** -- topological sort ensures base PRs are rebased
    before their dependents. Detects circular dependencies.
-3. **Preflight checks** -- verifies every PR branch is checked out in a
-   worktree.
-4. **Fetches origin** -- single `git fetch origin` before any rebasing.
-5. **Rebases** -- each branch is rebased onto its base. If the base was just
-   rebased in this run, it uses the local ref instead of `origin/<base>`. Dirty
-   worktrees are handled with `--autostash`.
-6. **Pushes** -- force-pushes each branch with `--force-with-lease`.
+3. **Fetches origin** -- single `git fetch origin` before any rebasing.
+4. **Rebases** -- each branch is rebased onto its base. If the base was just
+   rebased in this run, it uses the local ref instead of `origin/<base>`.
+   Branches in worktrees are rebased in place; other branches use a temporary
+   worktree that is cleaned up automatically.
+5. **Pushes** -- force-pushes each branch with `--force-with-lease`.
 
 ## Requirements
 
 - [gh](https://cli.github.com/) CLI
 - Git 2.0+
-- Branches must be checked out in git worktrees
 
 ## Related projects
 

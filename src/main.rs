@@ -20,7 +20,7 @@ const STYLES: Styles = Styles::styled()
 #[command(about = "Rebase stacked PRs onto their current base branches")]
 #[command(styles = STYLES)]
 struct Cli {
-    /// PR numbers to restack (auto-discovers from worktrees if omitted)
+    /// PR numbers to restack (discovers from worktrees if omitted)
     prs: Vec<u32>,
 
     /// Show what would be done without executing
@@ -94,6 +94,57 @@ fn run_cmd(cmd: &mut Command) -> Result<String> {
 fn run_cmd_in(dir: &Path, cmd: &mut Command) -> Result<String> {
     cmd.current_dir(dir);
     run_cmd(cmd)
+}
+
+fn rebase_and_push(dir: &Path, onto: &str, no_push: bool) -> Result<()> {
+    run_cmd_in(
+        dir,
+        Command::new("git").args(["rebase", "--autostash", onto]),
+    )
+    .with_context(|| {
+        format!(
+            "resolve conflicts in {} then run: git rebase --continue && git push --force-with-lease",
+            dir.display()
+        )
+    })?;
+
+    if !no_push {
+        run_cmd_in(
+            dir,
+            Command::new("git").args(["push", "--force-with-lease"]),
+        )?;
+    }
+
+    Ok(())
+}
+
+fn rebase_in_temp_worktree(branch: &str, onto: &str, no_push: bool) -> Result<()> {
+    let sanitized = branch.replace('/', "-");
+    let tmp_dir = std::env::temp_dir().join(format!("restack-{sanitized}"));
+    let tmp_str = tmp_dir.to_string_lossy().to_string();
+
+    run_cmd(Command::new("git").args(["worktree", "add", &tmp_str, branch]))
+        .with_context(|| format!("failed to create temporary worktree for branch '{branch}'"))?;
+
+    let result = rebase_and_push(&tmp_dir, onto, no_push);
+
+    match &result {
+        Ok(()) => {
+            let _ = run_cmd(Command::new("git").args(["worktree", "remove", "--force", &tmp_str]));
+        }
+        Err(e) => {
+            let msg = format!("{e:#}");
+            if msg.contains("rebase") {
+                // Rebase conflict: leave temp worktree for user to resolve
+            } else {
+                // Other failure (e.g. push): clean up since branch ref is already updated
+                let _ =
+                    run_cmd(Command::new("git").args(["worktree", "remove", "--force", &tmp_str]));
+            }
+        }
+    }
+
+    result
 }
 
 fn get_pr_info(id: &str) -> Result<PrInfo> {
@@ -357,17 +408,6 @@ fn main() -> Result<()> {
     let colors = branch_colors(&prs);
     StackTree::build(&prs).print_colored(&colors);
 
-    // Preflight: verify all branches are checked out in a worktree
-    for pr in &prs {
-        if !worktree_map.contains_key(&pr.head_ref) {
-            bail!(
-                "branch '{}' (PR #{}) is not checked out in any worktree",
-                pr.head_ref,
-                pr.number
-            );
-        }
-    }
-
     if !cli.dry_run {
         with_spinner("Fetching origin", || {
             run_cmd(Command::new("git").args(["fetch", "origin"]))?;
@@ -377,19 +417,17 @@ fn main() -> Result<()> {
 
     println!();
 
-    let mut rebased_heads: HashMap<String, PathBuf> = HashMap::new();
+    let mut rebased_heads: HashSet<String> = HashSet::new();
 
     for pr in &prs {
-        let worktree_path = &worktree_map[&pr.head_ref];
-
         // Rebase onto local branch if it was just rebased, otherwise onto origin/<base>
-        let onto = if rebased_heads.contains_key(&pr.base_ref) {
+        let onto = if rebased_heads.contains(&pr.base_ref) {
             pr.base_ref.clone()
         } else {
             format!("origin/{}", pr.base_ref)
         };
 
-        let onto_styled = if rebased_heads.contains_key(&pr.base_ref) {
+        let onto_styled = if rebased_heads.contains(&pr.base_ref) {
             format!("{}", style_branch(&pr.base_ref, &colors))
         } else {
             format!(
@@ -411,30 +449,20 @@ fn main() -> Result<()> {
             println!("  {msg}{push_note}");
         } else {
             let no_push = cli.no_push;
-            with_spinner(&msg, || {
-                run_cmd_in(
-                    worktree_path,
-                    Command::new("git").args(["rebase", "--autostash", &onto]),
-                )
-                .with_context(|| {
-                    format!(
-                        "resolve conflicts in {} then run: git rebase --continue",
-                        worktree_path.display()
-                    )
-                })?;
-
-                if !no_push {
-                    run_cmd_in(
-                        worktree_path,
-                        Command::new("git").args(["push", "--force-with-lease"]),
-                    )?;
+            match worktree_map.get(&pr.head_ref) {
+                Some(worktree_path) => {
+                    with_spinner(&msg, || rebase_and_push(worktree_path, &onto, no_push))?;
                 }
-
-                Ok(())
-            })?;
+                None => {
+                    let head_ref = pr.head_ref.clone();
+                    with_spinner(&msg, move || {
+                        rebase_in_temp_worktree(&head_ref, &onto, no_push)
+                    })?;
+                }
+            }
         }
 
-        rebased_heads.insert(pr.head_ref.clone(), worktree_path.clone());
+        rebased_heads.insert(pr.head_ref.clone());
     }
 
     if cli.dry_run {
