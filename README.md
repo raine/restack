@@ -108,7 +108,7 @@ restack 42 43
 
 ## Related projects
 
-- [workmux](https://github.com/raine/workmux) -- Git worktrees + tmux windows
-  for parallel AI agent workflows
-- [git-surgeon](https://github.com/raine/git-surgeon) -- Non-interactive
+- [workmux](https://github.com/raine/workmux) — Git worktrees + tmux windows for
+  parallel AI agent workflows
+- [git-surgeon](https://github.com/raine/git-surgeon) — Non-interactive
   hunk-level git staging for AI agents
