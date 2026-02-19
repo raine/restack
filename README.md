@@ -4,8 +4,10 @@
 
 <h1 align="center">restack</h1>
 
-Rebase stacked PRs onto their current base branches. When you merge a PR that
-has another PR stacked on top, `restack` rebases the entire chain automatically.
+Rebase
+[stacked PRs](https://grok.com/share/bGVnYWN5_5f6279c6-1c91-4746-bc0f-4233c3752adb?rid=51bcc2e5-3e9a-4439-9acd-62b5055bd3c2)
+onto their current base branches. When you merge a PR that has another PR
+stacked on top, `restack` rebases the entire chain automatically.
 
 <p align="center">
   <img src="meta/screenshot.webp" alt="restack demo" width="631">
@@ -86,22 +88,22 @@ restack 42 43
 
 ### Options
 
-- `--dry-run` -- show what would be done without executing
-- `--no-push` -- skip pushing branches after rebasing
+- `--dry-run` — show what would be done without executing
+- `--no-push` — skip pushing branches after rebasing
 
 ## How it works
 
-1. **Discovers PRs** -- without arguments, fetches all open PRs (`gh pr list`)
+1. **Discovers PRs** — without arguments, fetches all open PRs (`gh pr list`)
    and matches them against checked-out worktree branches. With arguments, looks
    up each PR individually.
-2. **Sorts by dependency** -- topological sort ensures base PRs are rebased
+2. **Sorts by dependency** — topological sort ensures base PRs are rebased
    before their dependents. Detects circular dependencies.
-3. **Fetches origin** -- single `git fetch origin` before any rebasing.
-4. **Rebases** -- each branch is rebased onto its base. If the base was just
+3. **Fetches origin** — single `git fetch origin` before any rebasing.
+4. **Rebases** — each branch is rebased onto its base. If the base was just
    rebased in this run, it uses the local ref instead of `origin/<base>`.
    Branches in worktrees are rebased in place; other branches use a temporary
    worktree that is cleaned up automatically.
-5. **Pushes** -- force-pushes each branch with `--force-with-lease`.
+5. **Pushes** — force-pushes each branch with `--force-with-lease`.
 
 ## Requirements
 
