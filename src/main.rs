@@ -24,9 +24,9 @@ struct Cli {
     #[arg(long)]
     dry_run: bool,
 
-    /// Push branches after rebasing (force-with-lease)
+    /// Skip pushing branches after rebasing
     #[arg(long)]
-    push: bool,
+    no_push: bool,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -251,7 +251,7 @@ fn main() -> Result<()> {
                 onto,
                 worktree_path.display()
             );
-            if cli.push {
+            if !cli.no_push {
                 println!(
                     "PR #{}: would push '{}' (force-with-lease)",
                     pr.number, pr.head_ref
@@ -275,7 +275,7 @@ fn main() -> Result<()> {
                 )
             })?;
 
-            if cli.push {
+            if !cli.no_push {
                 println!("PR #{}: pushing '{}'", pr.number, pr.head_ref);
                 run_cmd_in(
                     worktree_path,
