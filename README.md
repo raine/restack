@@ -7,6 +7,10 @@
 Rebase stacked PRs onto their current base branches. When you merge a PR that
 has another PR stacked on top, `restack` rebases the entire chain automatically.
 
+<p align="center">
+  <img src="meta/screenshot.webp" alt="restack demo" width="631">
+</p>
+
 ## Why?
 
 With stacked PRs, merging one PR leaves the next one based on a stale branch.
