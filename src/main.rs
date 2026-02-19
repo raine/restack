@@ -1,13 +1,21 @@
 use anyhow::{Context, Result, bail};
 use clap::Parser;
+use clap::builder::styling::{AnsiColor, Effects, Styles};
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+const STYLES: Styles = Styles::styled()
+    .header(AnsiColor::Green.on_default().effects(Effects::BOLD))
+    .usage(AnsiColor::Green.on_default().effects(Effects::BOLD))
+    .literal(AnsiColor::Cyan.on_default().effects(Effects::BOLD))
+    .placeholder(AnsiColor::Cyan.on_default());
+
 #[derive(Parser)]
 #[command(name = "gh-restack")]
 #[command(about = "Rebase stacked PRs onto their current base branches")]
+#[command(styles = STYLES)]
 struct Cli {
     /// PR numbers to restack (auto-discovers from worktrees if omitted)
     prs: Vec<u32>,
