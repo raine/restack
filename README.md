@@ -1,7 +1,7 @@
-# gh-restack
+# restack
 
 Rebase stacked PRs onto their current base branches. When you merge a PR that
-has another PR stacked on top, `gh-restack` rebases the entire chain
+has another PR stacked on top, `restack` rebases the entire chain
 automatically.
 
 ## Why?
@@ -18,10 +18,10 @@ cd worktree-c && git rebase feat-b
 git push --force-with-lease
 ```
 
-With gh-restack:
+With restack:
 
 ```
-gh-restack
+restack
 ```
 
 It figures out the dependency order, rebases each branch onto its current base,
@@ -36,17 +36,17 @@ cargo install --path .
 ## Usage
 
 ```
-gh-restack [OPTIONS] [PRS]...
+restack [OPTIONS] [PRS]...
 ```
 
 ### Auto-discovery (no arguments)
 
-When run without arguments, gh-restack scans your git worktrees,
+When run without arguments, restack scans your git worktrees,
 cross-references them with open PRs in the repo, and restacks all matching PRs
 in dependency order.
 
 ```bash
-gh-restack
+restack
 ```
 
 ```
@@ -67,7 +67,7 @@ All PRs restacked successfully.
 Target specific PRs instead of auto-discovering:
 
 ```bash
-gh-restack 42 43
+restack 42 43
 ```
 
 ### Options

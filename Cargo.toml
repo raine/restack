@@ -1,5 +1,5 @@
 [package]
-name = "gh-restack"
+name = "restack"
 version = "0.1.0"
 edition = "2024"
 authors = ["Raine Revere"]

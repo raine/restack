@@ -15,7 +15,7 @@ const STYLES: Styles = Styles::styled()
     .placeholder(AnsiColor::Cyan.on_default());
 
 #[derive(Parser)]
-#[command(name = "gh-restack")]
+#[command(name = "restack")]
 #[command(about = "Rebase stacked PRs onto their current base branches")]
 #[command(styles = STYLES)]
 struct Cli {
