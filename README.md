@@ -1,4 +1,8 @@
-# restack
+<p align="center">
+  <img src="meta/logo.webp" alt="restack logo" width="300">
+</p>
+
+<h1 align="center">restack</h1>
 
 Rebase stacked PRs onto their current base branches. When you merge a PR that
 has another PR stacked on top, `restack` rebases the entire chain automatically.
