@@ -36,6 +36,7 @@ struct PrInfo {
     head_ref: String,
     #[serde(rename = "baseRefName")]
     base_ref: String,
+    state: String,
 }
 
 fn run_cmd(cmd: &mut Command) -> Result<String> {
@@ -63,7 +64,7 @@ fn get_pr_info(id: &str) -> Result<PrInfo> {
         "view",
         id,
         "--json",
-        "number,headRefName,baseRefName",
+        "number,headRefName,baseRefName,state",
     ]))
     .with_context(|| format!("failed to get info for PR {id}"))?;
     serde_json::from_str(&output).with_context(|| format!("failed to parse PR {id} info"))
@@ -78,7 +79,7 @@ fn get_open_prs() -> Result<HashMap<String, PrInfo>> {
         "--limit",
         "100",
         "--json",
-        "number,headRefName,baseRefName",
+        "number,headRefName,baseRefName,state",
     ]))
     .context("failed to list open PRs")?;
     let prs: Vec<PrInfo> =
@@ -170,6 +171,7 @@ fn discover_worktree_prs(worktree_map: &HashMap<String, PathBuf>) -> Result<Vec<
             // Slow path: branch might have a PR not in the top 100 results.
             // Errors are ignored since most branches (e.g. main) won't have PRs.
             if let Ok(pr) = get_pr_info(branch)
+                && pr.state == "OPEN"
                 && seen.insert(pr.number)
             {
                 prs.push(pr);
@@ -196,6 +198,13 @@ fn main() -> Result<()> {
         let mut prs = Vec::new();
         for pr_number in &pr_numbers {
             let info = get_pr_info(&pr_number.to_string())?;
+            if info.state != "OPEN" {
+                bail!(
+                    "PR #{} is {}, not open",
+                    info.number,
+                    info.state.to_lowercase()
+                );
+            }
             prs.push(info);
         }
         prs
@@ -308,6 +317,7 @@ mod tests {
             number,
             head_ref: head.to_string(),
             base_ref: base.to_string(),
+            state: "OPEN".to_string(),
         }
     }
 
