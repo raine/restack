@@ -192,34 +192,12 @@ fn discover_worktree_prs(worktree_map: &HashMap<String, PathBuf>) -> Result<Vec<
     let mut prs = Vec::new();
     let mut seen = HashSet::new();
 
-    // Collect branches that need per-branch lookups
-    let mut fallback_branches = Vec::new();
     for branch in worktree_map.keys() {
-        if let Some(pr) = open_prs.get(branch) {
-            if seen.insert(pr.number) {
-                prs.push(pr.clone());
-            }
-        } else {
-            fallback_branches.push(branch.clone());
+        if let Some(pr) = open_prs.get(branch)
+            && seen.insert(pr.number)
+        {
+            prs.push(pr.clone());
         }
-    }
-
-    // Per-branch fallback with a single updating spinner
-    if !fallback_branches.is_empty() {
-        let pb = new_spinner("Checking branches");
-        for branch in &fallback_branches {
-            pb.set_message(format!("Checking {branch}"));
-            if let Ok(pr) = get_pr_info(branch)
-                && pr.state == "OPEN"
-                && seen.insert(pr.number)
-            {
-                pb.suspend(|| {
-                    println!("✔ {branch} → PR #{}", pr.number);
-                });
-                prs.push(pr);
-            }
-        }
-        pb.finish_and_clear();
     }
 
     if prs.is_empty() {
