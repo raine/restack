@@ -175,18 +175,6 @@ fn sort_by_dependency(prs: Vec<PrInfo>) -> Result<Vec<PrInfo>> {
     Ok(sorted)
 }
 
-fn check_worktree_clean(dir: &Path) -> Result<()> {
-    let status = run_cmd_in(dir, Command::new("git").args(["status", "--porcelain"]))?;
-    if !status.is_empty() {
-        bail!(
-            "working tree is not clean in {}:\n{}",
-            dir.display(),
-            status
-        );
-    }
-    Ok(())
-}
-
 fn discover_worktree_prs(worktree_map: &HashMap<String, PathBuf>) -> Result<Vec<PrInfo>> {
     let open_prs = with_spinner("Fetching open PRs", get_open_prs)?;
     let mut prs = Vec::new();
@@ -249,12 +237,6 @@ fn main() -> Result<()> {
     }
 
     if !cli.dry_run {
-        for pr in &prs {
-            let worktree_path = &worktree_map[&pr.head_ref];
-            check_worktree_clean(worktree_path)
-                .with_context(|| format!("PR #{} ({})", pr.number, worktree_path.display()))?;
-        }
-
         with_spinner("Fetching origin", || {
             run_cmd(Command::new("git").args(["fetch", "origin"]))?;
             Ok(())
@@ -296,13 +278,16 @@ fn main() -> Result<()> {
                     pr.number, pr.head_ref, onto
                 ),
                 || {
-                    run_cmd_in(worktree_path, Command::new("git").args(["rebase", &onto]))
-                        .with_context(|| {
-                            format!(
-                                "resolve conflicts in {} then run: git rebase --continue",
-                                worktree_path.display()
-                            )
-                        })
+                    run_cmd_in(
+                        worktree_path,
+                        Command::new("git").args(["rebase", "--autostash", &onto]),
+                    )
+                    .with_context(|| {
+                        format!(
+                            "resolve conflicts in {} then run: git rebase --continue",
+                            worktree_path.display()
+                        )
+                    })
                 },
             )?;
 
