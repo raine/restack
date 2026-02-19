@@ -1,6 +1,7 @@
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use clap::builder::styling::{AnsiColor, Effects, Styles};
+use console::style;
 use indicatif::{ProgressBar, ProgressStyle};
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
@@ -175,52 +176,89 @@ fn sort_by_dependency(prs: Vec<PrInfo>) -> Result<Vec<PrInfo>> {
     Ok(sorted)
 }
 
-fn format_stack_tree(prs: &[PrInfo]) -> String {
-    let head_refs: HashSet<&str> = prs.iter().map(|p| p.head_ref.as_str()).collect();
-    let mut children: HashMap<&str, Vec<&PrInfo>> = HashMap::new();
-
-    for pr in prs {
-        children.entry(pr.base_ref.as_str()).or_default().push(pr);
-    }
-
-    // Roots are base_refs that aren't any PR's head_ref
-    let mut roots: Vec<&str> = prs
-        .iter()
-        .map(|p| p.base_ref.as_str())
-        .filter(|base| !head_refs.contains(base))
-        .collect::<HashSet<_>>()
-        .into_iter()
-        .collect();
-    roots.sort();
-
-    let mut out = String::new();
-    for root in &roots {
-        out.push_str(&format!("{root}\n"));
-        if let Some(kids) = children.get(root) {
-            format_tree_children(kids, &children, "", &mut out);
-        }
-    }
-    out
+struct StackTree {
+    roots: Vec<String>,
+    children: HashMap<String, Vec<(u32, String)>>, // base_ref -> [(number, head_ref)]
 }
 
-fn format_tree_children(
-    prs: &[&PrInfo],
-    children: &HashMap<&str, Vec<&PrInfo>>,
-    prefix: &str,
-    out: &mut String,
-) {
-    for (i, pr) in prs.iter().enumerate() {
-        let is_last = i == prs.len() - 1;
-        let connector = if is_last { "└─" } else { "├─" };
-        let child_prefix = if is_last { "   " } else { "│  " };
+impl StackTree {
+    fn build(prs: &[PrInfo]) -> Self {
+        let head_refs: HashSet<&str> = prs.iter().map(|p| p.head_ref.as_str()).collect();
+        let mut children: HashMap<String, Vec<(u32, String)>> = HashMap::new();
 
-        out.push_str(&format!(
-            "{prefix}{connector} #{} {}\n",
-            pr.number, pr.head_ref
-        ));
+        for pr in prs {
+            children
+                .entry(pr.base_ref.clone())
+                .or_default()
+                .push((pr.number, pr.head_ref.clone()));
+        }
 
-        if let Some(kids) = children.get(pr.head_ref.as_str()) {
-            format_tree_children(kids, children, &format!("{prefix}{child_prefix}"), out);
+        let mut roots: Vec<String> = prs
+            .iter()
+            .map(|p| p.base_ref.as_str())
+            .filter(|base| !head_refs.contains(base))
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .map(|s| s.to_string())
+            .collect();
+        roots.sort();
+
+        Self { roots, children }
+    }
+
+    #[cfg(test)]
+    fn format_plain(&self) -> String {
+        let mut out = String::new();
+        for root in &self.roots {
+            out.push_str(&format!("{root}\n"));
+            if let Some(kids) = self.children.get(root) {
+                self.format_children_plain(kids, "", &mut out);
+            }
+        }
+        out
+    }
+
+    #[cfg(test)]
+    fn format_children_plain(&self, nodes: &[(u32, String)], prefix: &str, out: &mut String) {
+        for (i, (number, head_ref)) in nodes.iter().enumerate() {
+            let is_last = i == nodes.len() - 1;
+            let connector = if is_last { "└─" } else { "├─" };
+            let child_prefix = if is_last { "   " } else { "│  " };
+
+            out.push_str(&format!("{prefix}{connector} #{number} {head_ref}\n"));
+
+            if let Some(kids) = self.children.get(head_ref.as_str()) {
+                self.format_children_plain(kids, &format!("{prefix}{child_prefix}"), out);
+            }
+        }
+    }
+
+    fn print_colored(&self) {
+        for root in &self.roots {
+            println!("{}", style(root).bold());
+            if let Some(kids) = self.children.get(root.as_str()) {
+                self.print_children_colored(kids, "");
+            }
+        }
+    }
+
+    fn print_children_colored(&self, nodes: &[(u32, String)], prefix: &str) {
+        for (i, (number, head_ref)) in nodes.iter().enumerate() {
+            let is_last = i == nodes.len() - 1;
+            let connector = if is_last { "└─" } else { "├─" };
+            let child_prefix = if is_last { "   " } else { "│  " };
+
+            println!(
+                "{}{} {} {}",
+                style(prefix).dim(),
+                style(connector).dim(),
+                style(format!("#{number}")).cyan().bold(),
+                style(head_ref).green(),
+            );
+
+            if let Some(kids) = self.children.get(head_ref.as_str()) {
+                self.print_children_colored(kids, &format!("{prefix}{child_prefix}"));
+            }
         }
     }
 }
@@ -270,7 +308,7 @@ fn main() -> Result<()> {
     };
 
     let prs = sort_by_dependency(prs)?;
-    print!("{}", format_stack_tree(&prs));
+    StackTree::build(&prs).print_colored();
 
     // Preflight: verify all branches are checked out in a worktree
     for pr in &prs {
@@ -304,7 +342,12 @@ fn main() -> Result<()> {
             format!("origin/{}", pr.base_ref)
         };
 
-        let msg = format!("#{} {} → {}", pr.number, pr.head_ref, onto);
+        let msg = format!(
+            "{} {} → {}",
+            style(format!("#{}", pr.number)).cyan().bold(),
+            style(&pr.head_ref).green(),
+            style(&onto).yellow(),
+        );
 
         if cli.dry_run {
             let push_note = if cli.no_push { "" } else { " + push" };
@@ -409,7 +452,7 @@ mod tests {
             pr(3, "feat-c", "feat-b"),
         ];
         assert_eq!(
-            format_stack_tree(&prs),
+            StackTree::build(&prs).format_plain(),
             "\
 main
 └─ #1 feat-a
@@ -426,7 +469,7 @@ main
             pr(3, "feat-c", "feat-a"),
         ];
         assert_eq!(
-            format_stack_tree(&prs),
+            StackTree::build(&prs).format_plain(),
             "\
 main
 ├─ #1 feat-a
@@ -439,7 +482,7 @@ main
     fn tree_independent_prs() {
         let prs = vec![pr(1, "feat-a", "main"), pr(2, "feat-b", "main")];
         assert_eq!(
-            format_stack_tree(&prs),
+            StackTree::build(&prs).format_plain(),
             "\
 main
 ├─ #1 feat-a
