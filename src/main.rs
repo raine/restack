@@ -49,11 +49,12 @@ fn new_spinner(msg: &str) -> ProgressBar {
 
 fn finish_spinner(pb: &ProgressBar, msg: &str, ok: bool) {
     let prefix = if ok {
-        style("✔").green().to_string()
+        style("✔").green().bold().to_string()
     } else {
-        style("✘").red().to_string()
+        style("✘").red().bold().to_string()
     };
-    pb.finish_with_message(format!("{prefix} {msg}"));
+    pb.finish_and_clear();
+    println!("{prefix} {msg}");
 }
 
 fn with_spinner<T, F>(msg: &str, op: F) -> Result<T>
