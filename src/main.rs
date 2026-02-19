@@ -1,10 +1,12 @@
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use clap::builder::styling::{AnsiColor, Effects, Styles};
+use indicatif::{ProgressBar, ProgressStyle};
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Duration;
 
 const STYLES: Styles = Styles::styled()
     .header(AnsiColor::Green.on_default().effects(Effects::BOLD))
@@ -27,6 +29,27 @@ struct Cli {
     /// Skip pushing branches after rebasing
     #[arg(long)]
     no_push: bool,
+}
+
+fn with_spinner<T, F>(msg: &str, op: F) -> Result<T>
+where
+    F: FnOnce() -> Result<T>,
+{
+    let pb = ProgressBar::new_spinner();
+    pb.enable_steady_tick(Duration::from_millis(120));
+    pb.set_style(
+        ProgressStyle::default_spinner()
+            .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])
+            .template("{spinner:.blue} {msg}")
+            .unwrap(),
+    );
+    pb.set_message(msg.to_string());
+    let result = op();
+    match &result {
+        Ok(_) => pb.finish_with_message(format!("✔ {msg}")),
+        Err(_) => pb.finish_with_message(format!("✘ {msg}")),
+    }
+    result
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -156,8 +179,7 @@ fn check_worktree_clean(dir: &Path) -> Result<()> {
 }
 
 fn discover_worktree_prs(worktree_map: &HashMap<String, PathBuf>) -> Result<Vec<PrInfo>> {
-    eprintln!("Discovering PRs from checked-out worktrees...");
-    let open_prs = get_open_prs()?;
+    let open_prs = with_spinner("Discovering PRs from worktrees", get_open_prs)?;
     let mut prs = Vec::new();
     let mut seen = HashSet::new();
 
@@ -234,8 +256,10 @@ fn main() -> Result<()> {
                 .with_context(|| format!("PR #{} ({})", pr.number, worktree_path.display()))?;
         }
 
-        println!("\nFetching origin...");
-        run_cmd(Command::new("git").args(["fetch", "origin"]))?;
+        with_spinner("Fetching origin", || {
+            run_cmd(Command::new("git").args(["fetch", "origin"]))?;
+            Ok(())
+        })?;
     }
 
     println!();
@@ -267,33 +291,33 @@ fn main() -> Result<()> {
                 );
             }
         } else {
-            println!(
-                "PR #{}: rebasing '{}' onto '{}'",
-                pr.number, pr.head_ref, onto,
-            );
-
-            run_cmd_in(
-                worktree_path,
-                Command::new("git").args(["rebase", &onto]),
-            )
-            .with_context(|| {
-                format!(
-                    "rebase failed for PR #{} — resolve conflicts in {} then run: git rebase --continue",
-                    pr.number,
-                    worktree_path.display()
-                )
-            })?;
+            with_spinner(
+                &format!(
+                    "PR #{}: rebasing '{}' onto '{}'",
+                    pr.number, pr.head_ref, onto
+                ),
+                || {
+                    run_cmd_in(worktree_path, Command::new("git").args(["rebase", &onto]))
+                        .with_context(|| {
+                            format!(
+                                "resolve conflicts in {} then run: git rebase --continue",
+                                worktree_path.display()
+                            )
+                        })
+                },
+            )?;
 
             if !cli.no_push {
-                println!("PR #{}: pushing '{}'", pr.number, pr.head_ref);
-                run_cmd_in(
-                    worktree_path,
-                    Command::new("git").args(["push", "--force-with-lease"]),
-                )
-                .with_context(|| format!("push failed for PR #{}", pr.number))?;
+                with_spinner(
+                    &format!("PR #{}: pushing '{}'", pr.number, pr.head_ref),
+                    || {
+                        run_cmd_in(
+                            worktree_path,
+                            Command::new("git").args(["push", "--force-with-lease"]),
+                        )
+                    },
+                )?;
             }
-
-            println!("PR #{}: done\n", pr.number);
         }
 
         rebased_heads.insert(pr.head_ref.clone(), worktree_path.clone());
