@@ -9,8 +9,7 @@ use std::process::Command;
 #[command(name = "gh-restack")]
 #[command(about = "Rebase stacked PRs onto their current base branches")]
 struct Cli {
-    /// PR numbers to restack
-    #[arg(required = true)]
+    /// PR numbers to restack (auto-discovers from worktrees if omitted)
     prs: Vec<u32>,
 
     /// Show what would be done without executing
@@ -22,7 +21,7 @@ struct Cli {
     push: bool,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 struct PrInfo {
     number: u32,
     #[serde(rename = "headRefName")]
@@ -50,16 +49,33 @@ fn run_cmd_in(dir: &Path, cmd: &mut Command) -> Result<String> {
     run_cmd(cmd)
 }
 
-fn get_pr_info(pr_number: u32) -> Result<PrInfo> {
+fn get_pr_info(id: &str) -> Result<PrInfo> {
     let output = run_cmd(Command::new("gh").args([
         "pr",
         "view",
-        &pr_number.to_string(),
+        id,
         "--json",
         "number,headRefName,baseRefName",
     ]))
-    .with_context(|| format!("failed to get info for PR #{pr_number}"))?;
-    serde_json::from_str(&output).with_context(|| format!("failed to parse PR #{pr_number} info"))
+    .with_context(|| format!("failed to get info for PR {id}"))?;
+    serde_json::from_str(&output).with_context(|| format!("failed to parse PR {id} info"))
+}
+
+fn get_open_prs() -> Result<HashMap<String, PrInfo>> {
+    let output = run_cmd(Command::new("gh").args([
+        "pr",
+        "list",
+        "--state",
+        "open",
+        "--limit",
+        "100",
+        "--json",
+        "number,headRefName,baseRefName",
+    ]))
+    .context("failed to list open PRs")?;
+    let prs: Vec<PrInfo> =
+        serde_json::from_str(&output).context("failed to parse open PRs list")?;
+    Ok(prs.into_iter().map(|p| (p.head_ref.clone(), p)).collect())
 }
 
 fn parse_worktree_map(output: &str) -> HashMap<String, PathBuf> {
@@ -130,22 +146,49 @@ fn check_worktree_clean(dir: &Path) -> Result<()> {
     Ok(())
 }
 
+fn discover_worktree_prs(worktree_map: &HashMap<String, PathBuf>) -> Result<Vec<PrInfo>> {
+    eprintln!("Discovering PRs from checked-out worktrees...");
+    let open_prs = get_open_prs()?;
+    let mut prs = Vec::new();
+    let mut seen = HashSet::new();
+
+    for branch in worktree_map.keys() {
+        if let Some(pr) = open_prs.get(branch)
+            && seen.insert(pr.number)
+        {
+            prs.push(pr.clone());
+        }
+    }
+
+    if prs.is_empty() {
+        bail!("no open PRs found for checked-out worktree branches");
+    }
+
+    Ok(prs)
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    let worktree_map = get_worktree_map()?;
 
-    // Dedup PR numbers
-    let mut seen = HashSet::new();
-    let pr_numbers: Vec<u32> = cli.prs.into_iter().filter(|n| seen.insert(*n)).collect();
+    let prs = if cli.prs.is_empty() {
+        discover_worktree_prs(&worktree_map)?
+    } else {
+        let mut seen = HashSet::new();
+        let pr_numbers: Vec<u32> = cli.prs.into_iter().filter(|n| seen.insert(*n)).collect();
+        let mut prs = Vec::new();
+        for pr_number in &pr_numbers {
+            let info = get_pr_info(&pr_number.to_string())?;
+            prs.push(info);
+        }
+        prs
+    };
 
-    let mut prs = Vec::new();
-    for pr_number in &pr_numbers {
-        let info = get_pr_info(*pr_number)?;
-        println!("PR #{}: {} → {}", info.number, info.head_ref, info.base_ref);
-        prs.push(info);
+    for pr in &prs {
+        println!("PR #{}: {} → {}", pr.number, pr.head_ref, pr.base_ref);
     }
 
     let prs = sort_by_dependency(prs)?;
-    let worktree_map = get_worktree_map()?;
 
     // Preflight: verify all branches are checked out and worktrees are clean
     for pr in &prs {
