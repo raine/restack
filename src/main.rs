@@ -153,10 +153,19 @@ fn discover_worktree_prs(worktree_map: &HashMap<String, PathBuf>) -> Result<Vec<
     let mut seen = HashSet::new();
 
     for branch in worktree_map.keys() {
-        if let Some(pr) = open_prs.get(branch)
-            && seen.insert(pr.number)
-        {
-            prs.push(pr.clone());
+        // Fast path: found in bulk list
+        if let Some(pr) = open_prs.get(branch) {
+            if seen.insert(pr.number) {
+                prs.push(pr.clone());
+            }
+        } else {
+            // Slow path: branch might have a PR not in the top 100 results.
+            // Errors are ignored since most branches (e.g. main) won't have PRs.
+            if let Ok(pr) = get_pr_info(branch)
+                && seen.insert(pr.number)
+            {
+                prs.push(pr);
+            }
         }
     }
 
