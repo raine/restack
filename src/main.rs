@@ -175,6 +175,56 @@ fn sort_by_dependency(prs: Vec<PrInfo>) -> Result<Vec<PrInfo>> {
     Ok(sorted)
 }
 
+fn format_stack_tree(prs: &[PrInfo]) -> String {
+    let head_refs: HashSet<&str> = prs.iter().map(|p| p.head_ref.as_str()).collect();
+    let mut children: HashMap<&str, Vec<&PrInfo>> = HashMap::new();
+
+    for pr in prs {
+        children.entry(pr.base_ref.as_str()).or_default().push(pr);
+    }
+
+    // Roots are base_refs that aren't any PR's head_ref
+    let mut roots: Vec<&str> = prs
+        .iter()
+        .map(|p| p.base_ref.as_str())
+        .filter(|base| !head_refs.contains(base))
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    roots.sort();
+
+    let mut out = String::new();
+    for root in &roots {
+        out.push_str(&format!("{root}\n"));
+        if let Some(kids) = children.get(root) {
+            format_tree_children(kids, &children, "", &mut out);
+        }
+    }
+    out
+}
+
+fn format_tree_children(
+    prs: &[&PrInfo],
+    children: &HashMap<&str, Vec<&PrInfo>>,
+    prefix: &str,
+    out: &mut String,
+) {
+    for (i, pr) in prs.iter().enumerate() {
+        let is_last = i == prs.len() - 1;
+        let connector = if is_last { "└─" } else { "├─" };
+        let child_prefix = if is_last { "   " } else { "│  " };
+
+        out.push_str(&format!(
+            "{prefix}{connector} #{} {}\n",
+            pr.number, pr.head_ref
+        ));
+
+        if let Some(kids) = children.get(pr.head_ref.as_str()) {
+            format_tree_children(kids, children, &format!("{prefix}{child_prefix}"), out);
+        }
+    }
+}
+
 fn discover_worktree_prs(worktree_map: &HashMap<String, PathBuf>) -> Result<Vec<PrInfo>> {
     let open_prs = with_spinner("Fetching open PRs", get_open_prs)?;
     let mut prs = Vec::new();
@@ -219,11 +269,8 @@ fn main() -> Result<()> {
         prs
     };
 
-    for pr in &prs {
-        println!("PR #{}: {} → {}", pr.number, pr.head_ref, pr.base_ref);
-    }
-
     let prs = sort_by_dependency(prs)?;
+    print!("{}", format_stack_tree(&prs));
 
     // Preflight: verify all branches are checked out in a worktree
     for pr in &prs {
@@ -257,51 +304,34 @@ fn main() -> Result<()> {
             format!("origin/{}", pr.base_ref)
         };
 
+        let msg = format!("#{} {} → {}", pr.number, pr.head_ref, onto);
+
         if cli.dry_run {
-            println!(
-                "PR #{}: would rebase '{}' onto '{}' (in {})",
-                pr.number,
-                pr.head_ref,
-                onto,
-                worktree_path.display()
-            );
-            if !cli.no_push {
-                println!(
-                    "PR #{}: would push '{}' (force-with-lease)",
-                    pr.number, pr.head_ref
-                );
-            }
+            let push_note = if cli.no_push { "" } else { " + push" };
+            println!("  {msg}{push_note}");
         } else {
-            with_spinner(
-                &format!(
-                    "PR #{}: rebasing '{}' onto '{}'",
-                    pr.number, pr.head_ref, onto
-                ),
-                || {
+            let no_push = cli.no_push;
+            with_spinner(&msg, || {
+                run_cmd_in(
+                    worktree_path,
+                    Command::new("git").args(["rebase", "--autostash", &onto]),
+                )
+                .with_context(|| {
+                    format!(
+                        "resolve conflicts in {} then run: git rebase --continue",
+                        worktree_path.display()
+                    )
+                })?;
+
+                if !no_push {
                     run_cmd_in(
                         worktree_path,
-                        Command::new("git").args(["rebase", "--autostash", &onto]),
-                    )
-                    .with_context(|| {
-                        format!(
-                            "resolve conflicts in {} then run: git rebase --continue",
-                            worktree_path.display()
-                        )
-                    })
-                },
-            )?;
+                        Command::new("git").args(["push", "--force-with-lease"]),
+                    )?;
+                }
 
-            if !cli.no_push {
-                with_spinner(
-                    &format!("PR #{}: pushing '{}'", pr.number, pr.head_ref),
-                    || {
-                        run_cmd_in(
-                            worktree_path,
-                            Command::new("git").args(["push", "--force-with-lease"]),
-                        )
-                    },
-                )?;
-            }
+                Ok(())
+            })?;
         }
 
         rebased_heads.insert(pr.head_ref.clone(), worktree_path.clone());
@@ -368,6 +398,52 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("circular dependency")
+        );
+    }
+
+    #[test]
+    fn tree_linear_stack() {
+        let prs = vec![
+            pr(1, "feat-a", "main"),
+            pr(2, "feat-b", "feat-a"),
+            pr(3, "feat-c", "feat-b"),
+        ];
+        assert_eq!(
+            format_stack_tree(&prs),
+            "\
+main
+└─ #1 feat-a
+   └─ #2 feat-b
+      └─ #3 feat-c\n"
+        );
+    }
+
+    #[test]
+    fn tree_branching_stack() {
+        let prs = vec![
+            pr(1, "feat-a", "main"),
+            pr(2, "feat-b", "main"),
+            pr(3, "feat-c", "feat-a"),
+        ];
+        assert_eq!(
+            format_stack_tree(&prs),
+            "\
+main
+├─ #1 feat-a
+│  └─ #3 feat-c
+└─ #2 feat-b\n"
+        );
+    }
+
+    #[test]
+    fn tree_independent_prs() {
+        let prs = vec![pr(1, "feat-a", "main"), pr(2, "feat-b", "main")];
+        assert_eq!(
+            format_stack_tree(&prs),
+            "\
+main
+├─ #1 feat-a
+└─ #2 feat-b\n"
         );
     }
 
