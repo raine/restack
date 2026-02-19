@@ -225,7 +225,7 @@ fn main() -> Result<()> {
 
     let prs = sort_by_dependency(prs)?;
 
-    // Preflight: verify all branches are checked out and worktrees are clean
+    // Preflight: verify all branches are checked out in a worktree
     for pr in &prs {
         if !worktree_map.contains_key(&pr.head_ref) {
             bail!(
