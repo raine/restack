@@ -4,13 +4,8 @@ version = "0.1.0"
 edition = "2024"
 authors = ["Raine Virta"]
 description = "Rebase stacked PRs onto their current base branches"
-readme = "README.md"
 license = "MIT"
 repository = "https://github.com/raine/restack"
-homepage = "https://github.com/raine/restack"
-keywords = ["git", "github", "stacked-prs", "rebase", "cli"]
-categories = ["command-line-utilities"]
-include = ["src/**", "LICENSE", "README.md"]
 
 [dependencies]
 clap = { version = "4.5", features = ["derive", "color"] }
