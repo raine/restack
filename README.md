@@ -33,7 +33,14 @@ and pushes.
 ## Install
 
 ```bash
-cargo install --path .
+# Shell
+curl -fsSL https://raw.githubusercontent.com/raine/restack/main/scripts/install.sh | bash
+
+# Cargo
+cargo install restack
+
+# Homebrew
+brew install raine/restack/restack
 ```
 
 ## Usage
