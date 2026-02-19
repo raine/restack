@@ -1,8 +1,7 @@
 # restack
 
 Rebase stacked PRs onto their current base branches. When you merge a PR that
-has another PR stacked on top, `restack` rebases the entire chain
-automatically.
+has another PR stacked on top, `restack` rebases the entire chain automatically.
 
 ## Why?
 
@@ -41,9 +40,9 @@ restack [OPTIONS] [PRS]...
 
 ### Auto-discovery (no arguments)
 
-When run without arguments, restack scans your git worktrees,
-cross-references them with open PRs in the repo, and restacks all matching PRs
-in dependency order.
+When run without arguments, restack scans your git worktrees, cross-references
+them with open PRs in the repo, and restacks all matching PRs in dependency
+order.
 
 ```bash
 restack
