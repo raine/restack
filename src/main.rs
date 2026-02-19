@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use clap::builder::styling::{AnsiColor, Effects, Styles};
-use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use indicatif::{ProgressBar, ProgressStyle};
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -187,15 +187,8 @@ fn check_worktree_clean(dir: &Path) -> Result<()> {
     Ok(())
 }
 
-fn discover_worktree_prs(
-    mp: &MultiProgress,
-    worktree_map: &HashMap<String, PathBuf>,
-) -> Result<Vec<PrInfo>> {
-    let main_pb = mp.add(new_spinner("Fetching open PRs"));
-    let open_prs = get_open_prs();
-    finish_spinner(&main_pb, "Fetching open PRs", open_prs.is_ok());
-    let open_prs = open_prs?;
-
+fn discover_worktree_prs(worktree_map: &HashMap<String, PathBuf>) -> Result<Vec<PrInfo>> {
+    let open_prs = with_spinner("Fetching open PRs", get_open_prs)?;
     let mut prs = Vec::new();
     let mut seen = HashSet::new();
 
@@ -211,22 +204,22 @@ fn discover_worktree_prs(
         }
     }
 
-    // Per-branch fallback with individual spinners
-    for branch in &fallback_branches {
-        let pb = mp.add(new_spinner(&format!("Checking {branch}")));
-        let result = get_pr_info(branch);
-        match &result {
-            Ok(pr) if pr.state == "OPEN" => {
-                finish_spinner(&pb, &format!("Checking {branch} → PR #{}", pr.number), true);
-                if seen.insert(pr.number) {
-                    prs.push(pr.clone());
-                }
-            }
-            _ => {
-                // Not a PR or not open — just clear the spinner line
-                pb.finish_and_clear();
+    // Per-branch fallback with a single updating spinner
+    if !fallback_branches.is_empty() {
+        let pb = new_spinner("Checking branches");
+        for branch in &fallback_branches {
+            pb.set_message(format!("Checking {branch}"));
+            if let Ok(pr) = get_pr_info(branch)
+                && pr.state == "OPEN"
+                && seen.insert(pr.number)
+            {
+                pb.suspend(|| {
+                    println!("✔ {branch} → PR #{}", pr.number);
+                });
+                prs.push(pr);
             }
         }
+        pb.finish_and_clear();
     }
 
     if prs.is_empty() {
@@ -240,10 +233,8 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     let worktree_map = get_worktree_map()?;
 
-    let mp = MultiProgress::new();
-
     let prs = if cli.prs.is_empty() {
-        discover_worktree_prs(&mp, &worktree_map)?
+        discover_worktree_prs(&worktree_map)?
     } else {
         let mut seen = HashSet::new();
         let pr_numbers: Vec<u32> = cli.prs.into_iter().filter(|n| seen.insert(*n)).collect();
