@@ -440,7 +440,7 @@ fn main() -> Result<()> {
     if cli.dry_run {
         println!("\n(dry run — no changes made)");
     } else {
-        println!("All PRs restacked successfully.");
+        println!("\nAll PRs restacked successfully.");
     }
 
     Ok(())
