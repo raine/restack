@@ -179,7 +179,7 @@ fn check_worktree_clean(dir: &Path) -> Result<()> {
 }
 
 fn discover_worktree_prs(worktree_map: &HashMap<String, PathBuf>) -> Result<Vec<PrInfo>> {
-    let open_prs = with_spinner("Discovering PRs from worktrees", get_open_prs)?;
+    let open_prs = get_open_prs()?;
     let mut prs = Vec::new();
     let mut seen = HashSet::new();
 
@@ -213,7 +213,9 @@ fn main() -> Result<()> {
     let worktree_map = get_worktree_map()?;
 
     let prs = if cli.prs.is_empty() {
-        discover_worktree_prs(&worktree_map)?
+        with_spinner("Discovering PRs from worktrees", || {
+            discover_worktree_prs(&worktree_map)
+        })?
     } else {
         let mut seen = HashSet::new();
         let pr_numbers: Vec<u32> = cli.prs.into_iter().filter(|n| seen.insert(*n)).collect();
