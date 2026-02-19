@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -88,12 +88,12 @@ fn get_worktree_map() -> Result<HashMap<String, PathBuf>> {
 
 /// Sort PRs by dependency order (topological sort).
 /// If PR_B's base_ref matches PR_A's head_ref, PR_A comes first.
-fn sort_by_dependency(prs: Vec<PrInfo>) -> Vec<PrInfo> {
+fn sort_by_dependency(prs: Vec<PrInfo>) -> Result<Vec<PrInfo>> {
     let mut remaining = prs;
     let mut sorted = Vec::with_capacity(remaining.len());
 
     while !remaining.is_empty() {
-        let remaining_heads: std::collections::HashSet<&str> =
+        let remaining_heads: HashSet<&str> =
             remaining.iter().map(|p| p.head_ref.as_str()).collect();
 
         let pos = remaining
@@ -103,14 +103,19 @@ fn sort_by_dependency(prs: Vec<PrInfo>) -> Vec<PrInfo> {
         match pos {
             Some(idx) => sorted.push(remaining.remove(idx)),
             None => {
-                // Cycle or all remaining depend on each other — append in original order
-                sorted.extend(remaining);
-                break;
+                let cycle_prs: Vec<String> = remaining
+                    .iter()
+                    .map(|p| format!("PR #{} ({} → {})", p.number, p.head_ref, p.base_ref))
+                    .collect();
+                bail!(
+                    "circular dependency detected among PRs:\n  {}",
+                    cycle_prs.join("\n  ")
+                );
             }
         }
     }
 
-    sorted
+    Ok(sorted)
 }
 
 fn check_worktree_clean(dir: &Path) -> Result<()> {
@@ -128,32 +133,48 @@ fn check_worktree_clean(dir: &Path) -> Result<()> {
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
+    // Dedup PR numbers
+    let mut seen = HashSet::new();
+    let pr_numbers: Vec<u32> = cli.prs.into_iter().filter(|n| seen.insert(*n)).collect();
+
     let mut prs = Vec::new();
-    for &pr_number in &cli.prs {
-        let info = get_pr_info(pr_number)?;
+    for pr_number in &pr_numbers {
+        let info = get_pr_info(*pr_number)?;
         println!("PR #{}: {} → {}", info.number, info.head_ref, info.base_ref);
         prs.push(info);
     }
 
-    let prs = sort_by_dependency(prs);
+    let prs = sort_by_dependency(prs)?;
     let worktree_map = get_worktree_map()?;
-    let mut rebased_heads: HashMap<String, PathBuf> = HashMap::new();
+
+    // Preflight: verify all branches are checked out and worktrees are clean
+    for pr in &prs {
+        if !worktree_map.contains_key(&pr.head_ref) {
+            bail!(
+                "branch '{}' (PR #{}) is not checked out in any worktree",
+                pr.head_ref,
+                pr.number
+            );
+        }
+    }
 
     if !cli.dry_run {
+        for pr in &prs {
+            let worktree_path = &worktree_map[&pr.head_ref];
+            check_worktree_clean(worktree_path)
+                .with_context(|| format!("PR #{} ({})", pr.number, worktree_path.display()))?;
+        }
+
         println!("\nFetching origin...");
         run_cmd(Command::new("git").args(["fetch", "origin"]))?;
     }
 
     println!();
 
+    let mut rebased_heads: HashMap<String, PathBuf> = HashMap::new();
+
     for pr in &prs {
-        let worktree_path = worktree_map.get(&pr.head_ref).ok_or_else(|| {
-            anyhow::anyhow!(
-                "branch '{}' (PR #{}) is not checked out in any worktree",
-                pr.head_ref,
-                pr.number
-            )
-        })?;
+        let worktree_path = &worktree_map[&pr.head_ref];
 
         // Rebase onto local branch if it was just rebased, otherwise onto origin/<base>
         let onto = if rebased_heads.contains_key(&pr.base_ref) {
@@ -181,8 +202,6 @@ fn main() -> Result<()> {
                 "PR #{}: rebasing '{}' onto '{}'",
                 pr.number, pr.head_ref, onto,
             );
-
-            check_worktree_clean(worktree_path)?;
 
             run_cmd_in(
                 worktree_path,
@@ -235,7 +254,7 @@ mod tests {
     #[test]
     fn sort_independent_prs_preserves_order() {
         let prs = vec![pr(1, "feat-a", "main"), pr(2, "feat-b", "main")];
-        let sorted = sort_by_dependency(prs);
+        let sorted = sort_by_dependency(prs).unwrap();
         assert_eq!(sorted[0].number, 1);
         assert_eq!(sorted[1].number, 2);
     }
@@ -247,7 +266,7 @@ mod tests {
             pr(1, "feat-a", "main"),
             pr(2, "feat-b", "feat-a"),
         ];
-        let sorted = sort_by_dependency(prs);
+        let sorted = sort_by_dependency(prs).unwrap();
         assert_eq!(sorted[0].number, 1);
         assert_eq!(sorted[1].number, 2);
         assert_eq!(sorted[2].number, 3);
@@ -256,9 +275,22 @@ mod tests {
     #[test]
     fn sort_partial_stack() {
         let prs = vec![pr(3, "feat-c", "feat-b"), pr(2, "feat-b", "main")];
-        let sorted = sort_by_dependency(prs);
+        let sorted = sort_by_dependency(prs).unwrap();
         assert_eq!(sorted[0].number, 2);
         assert_eq!(sorted[1].number, 3);
+    }
+
+    #[test]
+    fn sort_detects_cycle() {
+        let prs = vec![pr(1, "feat-a", "feat-b"), pr(2, "feat-b", "feat-a")];
+        let result = sort_by_dependency(prs);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("circular dependency")
+        );
     }
 
     #[test]
