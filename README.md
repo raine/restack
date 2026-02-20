@@ -57,16 +57,15 @@ restack [OPTIONS] [PRS]...
 
 ### Auto-discovery (no arguments)
 
-When run without arguments, restack scans your git worktrees, cross-references
-them with open PRs in the repo, and restacks all matching PRs in dependency
-order.
+When run without arguments, restack finds all your open PRs in the repo and
+restacks them in dependency order.
 
 ```bash
 restack
 ```
 
 ```
-✔ Fetching open PRs
+✔ Fetching your open PRs
 PR #42: feat-a → main
 PR #43: feat-b → feat-a
 
@@ -93,9 +92,8 @@ restack 42 43
 
 ## How it works
 
-1. **Discovers PRs** — without arguments, fetches all open PRs (`gh pr list`)
-   and matches them against checked-out worktree branches. With arguments, looks
-   up each PR individually.
+1. **Discovers PRs** — without arguments, fetches all your open PRs
+   (`gh pr list --author @me`). With arguments, looks up each PR individually.
 2. **Sorts by dependency** — topological sort ensures base PRs are rebased
    before their dependents. Detects circular dependencies.
 3. **Fetches origin** — single `git fetch origin` before any rebasing.

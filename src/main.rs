@@ -159,10 +159,12 @@ fn get_pr_info(id: &str) -> Result<PrInfo> {
     serde_json::from_str(&output).with_context(|| format!("failed to parse PR {id} info"))
 }
 
-fn get_open_prs() -> Result<HashMap<String, PrInfo>> {
+fn get_my_open_prs() -> Result<Vec<PrInfo>> {
     let output = run_cmd(Command::new("gh").args([
         "pr",
         "list",
+        "--author",
+        "@me",
         "--state",
         "open",
         "--limit",
@@ -171,9 +173,7 @@ fn get_open_prs() -> Result<HashMap<String, PrInfo>> {
         "number,headRefName,baseRefName,state",
     ]))
     .context("failed to list open PRs")?;
-    let prs: Vec<PrInfo> =
-        serde_json::from_str(&output).context("failed to parse open PRs list")?;
-    Ok(prs.into_iter().map(|p| (p.head_ref.clone(), p)).collect())
+    serde_json::from_str(&output).context("failed to parse open PRs list")
 }
 
 fn parse_worktree_map(output: &str) -> HashMap<String, PathBuf> {
@@ -360,24 +360,14 @@ impl StackTree {
     }
 }
 
-fn discover_worktree_prs(worktree_map: &HashMap<String, PathBuf>) -> Result<Vec<PrInfo>> {
-    let open_prs = with_spinner("Fetching open PRs", get_open_prs)?;
-    let mut prs = Vec::new();
-    let mut seen = HashSet::new();
-
-    for branch in worktree_map.keys() {
-        if let Some(pr) = open_prs.get(branch)
-            && seen.insert(pr.number)
-        {
-            prs.push(pr.clone());
-        }
-    }
+fn discover_prs() -> Result<Option<Vec<PrInfo>>> {
+    let prs = with_spinner("Fetching your open PRs", get_my_open_prs)?;
 
     if prs.is_empty() {
-        bail!("no open PRs found for checked-out worktree branches");
+        return Ok(None);
     }
 
-    Ok(prs)
+    Ok(Some(prs))
 }
 
 fn main() -> Result<()> {
@@ -385,7 +375,13 @@ fn main() -> Result<()> {
     let worktree_map = get_worktree_map()?;
 
     let prs = if cli.prs.is_empty() {
-        discover_worktree_prs(&worktree_map)?
+        match discover_prs()? {
+            Some(prs) => prs,
+            None => {
+                println!("No open PRs found.");
+                return Ok(());
+            }
+        }
     } else {
         let mut seen = HashSet::new();
         let pr_numbers: Vec<u32> = cli.prs.into_iter().filter(|n| seen.insert(*n)).collect();
